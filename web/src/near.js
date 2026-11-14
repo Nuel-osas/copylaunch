@@ -55,6 +55,12 @@ export async function view(method, args = {}, contractId = CONTRACT) {
   return JSON.parse(new TextDecoder().decode(new Uint8Array(r.result)));
 }
 
+/** Access keys on an account: how many, and how many can do anything (full access). */
+export async function accessKeys(accountId) {
+  const r = await rpc('query', { request_type: 'view_access_key_list', finality: 'final', account_id: accountId });
+  return { total: r.keys.length, full: r.keys.filter((k) => k.access_key.permission === 'FullAccess').length };
+}
+
 export async function walletBalance(accountId) {
   const r = await rpc('query', { request_type: 'view_account', finality: 'optimistic', account_id: accountId });
   return BigInt(r.amount);

@@ -3,6 +3,7 @@ import { useWalletSelector } from '@near-wallet-selector/react-hook';
 import {
   CONTRACT,
   GAS,
+  accessKeys,
   accountUrl,
   agoText,
   fmtNear,
@@ -1007,6 +1008,18 @@ function Feed({ chain, me }) {
 function Rules({ chain }) {
   const c = chain.config;
   const t = chain.totals;
+  const [keys, setKeys] = useState(null);
+  useEffect(() => {
+    accessKeys(CONTRACT).then(setKeys, () => setKeys(undefined));
+  }, [chain.tradeCount]);
+  const keyText =
+    keys === null
+      ? 'reading…'
+      : keys === undefined
+        ? 'could not read'
+        : keys.full === 0
+          ? 'locked: the contract account has no full-access key, so its code can never change'
+          : `not locked yet: the contract account has ${keys.full} full-access key${keys.full > 1 ? 's' : ''}, so its code could still be replaced`;
   const rows = c
     ? [
         ['Supply per token', `${fmtTokens(c.token_supply)}, minted once to the launchpad, all of it in the curve`],
@@ -1016,7 +1029,8 @@ function Rules({ chain }) {
         ['Creator fee', `${c.default_fee_bps / 100}% unless the creator sets another, at most ${c.max_fee_bps / 100}%, only on copied buys`],
         ['Limits', `${c.max_followers} followers per creator, ${c.max_following} creators per follower, allowances up to ${c.max_allowance_days} days`],
         ['Token contract', `${c.token_code_bytes.toLocaleString()} bytes, sha256 ${c.token_code_sha256.slice(0, 16)}…`],
-        ['Admin', 'none: no owner, no upgrade method, no pause'],
+        ['Admin', 'no owner, no admin or upgrade method, no pause; token accounts have no keys'],
+        ['Contract account', keyText],
       ]
     : [];
   return (

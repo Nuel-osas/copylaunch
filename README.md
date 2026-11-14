@@ -159,8 +159,14 @@ disappears and that no allowance spent past its cap
 
 ### Parameters
 
-All constants in `contracts/launchpad/src/lib.rs`, readable through `get_config`. There is no owner,
-no admin method, no upgrade method and no pause.
+All constants in `contracts/launchpad/src/lib.rs`, readable through `get_config`. The contract has no
+owner, no admin method, no upgrade method and no pause. Each token account has no access keys at all.
+
+The `copylaunch.testnet` account itself still holds the deployer's full-access key, so whoever holds
+that key could deploy different code. Deleting that key locks the contract for good; it has not been
+done yet. Check the current state with
+`near account list-keys copylaunch.testnet network-config testnet now` (the web app's Rules section
+shows it too).
 
 | Parameter | Value |
 | --- | --- |
@@ -186,6 +192,7 @@ Not measured on chain: the gas of a buy with 32 followers.
 ## Limits
 
 - Testnet only. Not audited.
+- The launchpad account still has its deployer's key (see Parameters), so the code can still be replaced.
 - 32 followers per creator, so one copied trade stays well inside one transaction's gas.
 - Storage is paid by flat fees, sized for the worst case in a unit test, not metered per call.
 - Followers' sell proceeds and expiry refunds wait in `claim` rather than being pushed, so one trade
