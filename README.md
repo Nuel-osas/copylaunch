@@ -50,22 +50,26 @@ CopyLaunch moves the copy into the contract:
 ### 1. In a browser (testnet wallet)
 
 1. Open https://nuel-osas.github.io/copylaunch/ (or run `make web` and open http://localhost:5173).
-   See: the token list, the trade feed with each copy listed under the trade that carried it, and
-   "The books" (what the contract owes against what it holds), all read live from `copylaunch.testnet`.
-2. Press "Connect wallet" and pick a testnet wallet (Meteor, MyNearWallet, Intear or HERE).
+   See: a live ticker of trades, every meme with a sparkline of its price, and below it each trade with the
+   followers that copied it, all read from `copylaunch.testnet`.
+2. Press "Connect" and pick a testnet wallet (Meteor, MyNearWallet, Intear or HERE).
    See: your account in the header.
-3. Launch: fill in symbol and name under "Launch a token", press "Launch for 1.711 NEAR".
-   See: a new card; the token contract `<symbol>.copylaunch.testnet` exists on the explorer.
-4. Follow: under "Follow", pick a creator, set a total cap, a per-trade cap and an end date, press "Follow
-   and deposit".
-   See: the allowance under "Dashboard · Creators you copy", with spent / total and a countdown.
-5. Buy as the creator (a second account): open the token, press "Trade". The quote lists every follower's
-   copy before you sign. Buy.
-   See: in the feed, the buy with one line per copy, each cut to its own per-trade cap, and "no fee on copies".
-6. Revoke as the follower: "Revoke and get N NEAR back".
+3. Launch: open "Launch", fill in symbol and name, press "Launch for 1.711 NEAR".
+   See: the new meme's page; its contract `<symbol>.copylaunch.testnet` exists on the explorer.
+4. Follow: open a creator's page (click their name anywhere), set a total cap, a cap per trade and an end
+   date under "Put a leash on it", press "Follow and lock".
+   See: the leash under "My flock · Leashes you hold", with spent / total and a countdown.
+5. Buy as the creator (a second account): open the meme's page. Before you sign, the trade box lists every
+   follower who will buy with you and how much. Buy.
+   See: a panel naming the followers who bought in the same transaction; in the trades list, one line per
+   copy, each cut to its own per-trade cap, and "no fee on copies".
+6. Let go as the follower: "My flock", then "Let go: get N NEAR back".
    See: the NEAR back in the wallet in the same transaction; the creator's next buy is not copied.
 
-A token link `#t/<symbol>` opens that token's trade panel directly.
+Other pages: "Lead ducks" ranks creators by followers, with what their followers put in and took out;
+"Rules" shows every contract constant, whether the contract account is locked, and owed against held.
+Each meme's price chart is rebuilt by replaying the contract's trade log, and says so when the replay ends
+exactly on the curve the contract reports. A link `#/t/<symbol>` opens a meme; `#/c/<account>` a creator.
 
 ### 2. Without a wallet (read only)
 
