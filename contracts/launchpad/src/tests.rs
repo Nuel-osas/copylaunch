@@ -602,6 +602,62 @@ fn a_creator_selling_everything_takes_the_followers_copies_out_with_them() {
     assert!(reached_curve - FILL_STORAGE_FEE - back < 1_000, "follower lost {} yocto to price", reached_curve - FILL_STORAGE_FEE - back);
 }
 
+// ---- no side door: a creator cannot take tokens out while followers hold copies --------------
+
+#[test]
+#[should_panic(expected = "people copying you hold this token")]
+fn a_creator_cannot_withdraw_a_token_their_followers_hold_copies_of() {
+    let mut c = pad();
+    follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+    let b = buy(&mut c, "dev.test", N, T0 + 1);
+    as_user("dev.test", WITHDRAW_DEPOSIT, T0 + 2);
+    c.withdraw_token("frog".into(), U128(b.tokens.0)).detach();
+}
+
+#[test]
+fn the_creator_can_withdraw_once_no_follower_holds_copies() {
+    // After the follower revokes, after the follower sold the copies themselves, and after expiry.
+    let cases: [(&str, fn(&mut CopyLaunch)); 3] = [
+        ("revoked", |c| {
+            as_user("fan.test", 1, T0 + 2);
+            c.revoke(acc("dev.test"));
+        }),
+        ("sold by the follower", |c| {
+            let held = c.get_balance("frog".into(), acc("fan.test")).0;
+            as_user("fan.test", 1, T0 + 2);
+            c.sell("frog".into(), U128(held), U128(0));
+        }),
+        ("expired", |_| {}),
+    ];
+    for (name, step) in cases {
+        let mut c = pad();
+        follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+        let b = buy(&mut c, "dev.test", N, T0 + 1);
+        step(&mut c);
+        let when = if name == "expired" { T0 + HOUR } else { T0 + 3 };
+        as_user("dev.test", WITHDRAW_DEPOSIT, when);
+        c.withdraw_token("frog".into(), U128(b.tokens.0)).detach();
+        assert_eq!(bal(&c, "dev.test"), 0, "{name}");
+    }
+}
+
+#[test]
+fn a_creator_can_still_withdraw_tokens_of_a_coin_nobody_copied() {
+    let mut c = pad();
+    launch(&mut c, "toad", "dev.test");
+    follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+    buy(&mut c, "dev.test", N, T0 + 1); // frog: copied
+    as_user("dev.test", N, T0 + 2);
+    let toad = c.buy("toad".into(), U128(0)); // toad: copied too, so the follower holds both
+    // The follower sells their toad copies; the creator may now take toad out but not frog.
+    let held = c.get_balance("toad".into(), acc("fan.test")).0;
+    as_user("fan.test", 1, T0 + 3);
+    c.sell("toad".into(), U128(held), U128(0));
+    as_user("dev.test", WITHDRAW_DEPOSIT, T0 + 4);
+    c.withdraw_token("toad".into(), U128(toad.tokens.0)).detach();
+    assert_eq!(c.get_balance("toad".into(), acc("dev.test")).0, 0);
+}
+
 #[test]
 fn tokens_a_follower_bought_themselves_are_not_sold_by_the_creators_sell() {
     let mut c = pad();

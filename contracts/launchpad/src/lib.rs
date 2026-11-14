@@ -674,7 +674,8 @@ impl CopyLaunch {
 
     /// Sends `amount` of the caller's tokens out to their own account on the token's NEP-141
     /// contract. Attach 0.002 NEAR: it registers the caller there if needed. If the transfer
-    /// fails the tokens are put back.
+    /// fails the tokens are put back. Refused while anyone with a live allowance for the caller
+    /// holds copies of the caller's buys of this token.
     #[payable]
     pub fn withdraw_token(&mut self, symbol: String, amount: U128) -> Promise {
         let who = env::predecessor_account_id();
@@ -682,6 +683,12 @@ impl CopyLaunch {
         require!(deposit >= WITHDRAW_DEPOSIT, "attach 0.002 NEAR to register on the token contract");
         require!(amount.0 > 0, "the amount must be positive");
         let token = self.ready_token(&symbol);
+        // Otherwise a creator could take their tokens out and sell them elsewhere while the people
+        // copying them still hold theirs. Selling here takes the followers out at the same price.
+        require!(
+            !self.copies_held(&who, &symbol, env::block_timestamp()),
+            "people copying you hold this token: sell it here instead, and they sell with you"
+        );
         self.debit(&symbol, &who, amount.0);
         self.totals.storage_fees += deposit - TOKEN_REGISTRATION - 1;
         Promise::new(token.account_id)
@@ -942,6 +949,19 @@ impl CopyLaunch {
         let held = self.claimable.get(who).copied().unwrap_or(0);
         self.claimable.insert(who.clone(), held + amount);
         self.totals.claimable += amount;
+    }
+
+    /// True if anyone with a live allowance for `creator` still holds tokens of `symbol` that
+    /// their copies bought.
+    fn copies_held(&self, creator: &AccountId, symbol: &String, now: u64) -> bool {
+        let Some(list) = self.followers.get(creator) else { return false };
+        list.iter().any(|f| {
+            self.allowances.get(&(f.clone(), creator.clone())).is_some_and(|a| {
+                !a.is_expired(now)
+                    && self.copied.get(&(a.id, symbol.clone())).is_some_and(|p| p.tokens > 0)
+                    && self.balance(symbol, f) > 0
+            })
+        })
     }
 
     /// Removes an allowance and both list entries. Returns its unspent NEAR, or `None` if there
