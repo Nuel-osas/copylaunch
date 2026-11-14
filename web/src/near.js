@@ -192,3 +192,73 @@ export function readOutcome(outcome) {
   }
   return { hash, value };
 }
+
+// ---- the whole trade log and each token's price history ---------------------------------------
+
+/** Every trade, newest first, paging backwards through `get_trades`. */
+export async function allTrades(max = 2000) {
+  const out = [];
+  let before = null;
+  while (out.length < max) {
+    const page = await view('get_trades', before === null ? { limit: 100 } : { before_index: before, limit: 100 });
+    out.push(...page);
+    if (page.length < 100) break;
+    before = page[page.length - 1].index;
+    if (before === 0) break;
+  }
+  return out;
+}
+
+/** NEAR that went into (buy) or out of (sell) the curve in one trade, the trader's fill and every copy. */
+export function curveFlow(trade, fill) {
+  const f = BigInt(fill);
+  let near = 0n;
+  let tokens = BigInt(trade.tokens);
+  if (trade.side === 'buy') {
+    near = BigInt(trade.near) - f;
+    for (const c of trade.copies) {
+      near += BigInt(c.near) - BigInt(c.fee) - f;
+      tokens += BigInt(c.tokens);
+    }
+  } else {
+    near = BigInt(trade.near) + f;
+    for (const c of trade.copies) {
+      near += BigInt(c.near) + BigInt(c.fee) + f;
+      tokens += BigInt(c.tokens);
+    }
+  }
+  return { near, tokens };
+}
+
+/**
+ * Replays a token's trades from launch and returns the curve's price after each one, in NEAR per
+ * million tokens. `exact` is true when the replay ends on the reserves the contract reports now,
+ * which shows the history is complete and read correctly.
+ */
+export function pricePath(token, trades, config) {
+  const V = BigInt(token.virtual_near);
+  let R = 0n;
+  let T = BigInt(token.supply);
+  const price = () => Number(((V + R) * 10n ** 6n * TOKEN_UNIT) / T) / 1e24;
+  const pts = [{ t: token.created_at_ms, price: price(), index: -1 }];
+  const mine = trades.filter((t) => t.symbol === token.symbol).sort((a, b) => a.index - b.index);
+  for (const tr of mine) {
+    const { near, tokens } = curveFlow(tr, config.fill_storage_fee);
+    if (tr.side === 'buy') {
+      R += near;
+      T -= tokens;
+    } else {
+      R -= near;
+      T += tokens;
+    }
+    if (T <= 0n) break;
+    pts.push({ t: tr.timestamp_ms, price: price(), index: tr.index, side: tr.side });
+  }
+  const exact = R === BigInt(token.near_reserve) && T === BigInt(token.token_reserve);
+  return { pts, exact };
+}
+
+/** NEAR moved through a trade, the trader's own amount plus every copy, for volume figures. */
+export function tradeVolume(trade) {
+  return trade.copies.reduce((a, c) => a + BigInt(c.near), BigInt(trade.near));
+}
