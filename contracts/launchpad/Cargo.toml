@@ -1,0 +1,17 @@
+[package]
+name = "copylaunch"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Meme-token launchpad where following a creator is a funded, capped, expiring, revocable allowance"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { workspace = true }
+uint = { version = "0.9.5", default-features = false }
+
+[dev-dependencies]
+near-sdk = { workspace = true, features = ["unit-testing"] }
