@@ -12,6 +12,7 @@ Status: deployed on testnet, not audited, testnet NEAR only.
 
 | What | Where |
 | --- | --- |
+| Web app | https://nuel-osas.github.io/copylaunch/ (a token link: `#t/<symbol>`, e.g. [`#t/frog4tt3`](https://nuel-osas.github.io/copylaunch/#t/frog4tt3)) |
 | Launchpad contract | [`copylaunch.testnet`](https://testnet.nearblocks.io/address/copylaunch.testnet), code hash `7D9fBBjom7bPwEUP8QsertjfoawGtYjU5yntCcPsv1x` |
 | Deploy transaction | [`7HjjG2cc…`](https://testnet.nearblocks.io/txns/7HjjG2ccWD1jFHUcPTbD8EkPp1M5PiD5jvACUmrs9Qej), init [`6absJQHg…`](https://testnet.nearblocks.io/txns/6absJQHguLB947DJNRHviT6nxvhNzNEnSsxnwZvapYyf) |
 | Token contract code (one copy per launch) | sha256 `541ae10b335c65d32a0e43d70860272801147acc544c24a0b4c0883cb5dc883c` |
@@ -45,7 +46,7 @@ CopyLaunch moves the copy into the contract:
 
 ### 1. In a browser (testnet wallet)
 
-1. Run `make web` and open http://localhost:5173 (or the hosted page, once published).
+1. Open https://nuel-osas.github.io/copylaunch/ (or run `make web` and open http://localhost:5173).
    See: the token list, the trade feed with each copy listed under the trade that carried it, and
    "The books" (what the contract owes against what it holds), all read live from `copylaunch.testnet`.
 2. Press "Connect wallet" and pick a testnet wallet (Meteor, MyNearWallet, Intear or HERE).
