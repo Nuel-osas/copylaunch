@@ -1,0 +1,189 @@
+{
+  "network": "testnet",
+  "contract": "copylaunch.testnet",
+  "token": "frog4tt3.copylaunch.testnet",
+  "accounts": {
+    "creator": "cl-dev.testnet",
+    "followers": [
+      "cl-ann.testnet",
+      "cl-bob.testnet"
+    ]
+  },
+  "ran_at": "2026-11-14T11:21:29.787Z",
+  "checks": 42,
+  "failed": [],
+  "copied_buy_gas_tgas": 4.2,
+  "transactions": [
+    {
+      "step": 1,
+      "label": "launch",
+      "account": "cl-dev.testnet",
+      "method": "launch",
+      "ok": true,
+      "hash": "8ro69JEi3N7yPpdQwYFUryQL5Ey7EAyDEtg9aKvdP78M",
+      "gas_tgas": 12.3
+    },
+    {
+      "step": 2,
+      "label": "cl-ann.testnet follows: 1.5 NEAR in total, 0.5 per trade, one hour",
+      "account": "cl-ann.testnet",
+      "method": "follow",
+      "ok": true,
+      "hash": "7npSTdVnmst1t38kyPRCSQG5o7n4iEFv9mCvoVafqwxa",
+      "gas_tgas": 2.5
+    },
+    {
+      "step": 2,
+      "label": "cl-bob.testnet follows: 1 NEAR in total, 1 per trade, 75 seconds",
+      "account": "cl-bob.testnet",
+      "method": "follow",
+      "ok": true,
+      "hash": "BD1jeAXvkEEzD6guR9hH3dJsaFUfvPAj4BGyCoNkyrLC",
+      "gas_tgas": 2.5
+    },
+    {
+      "step": 3,
+      "label": "a second allowance for the same creator",
+      "account": "cl-ann.testnet",
+      "method": "follow",
+      "ok": false,
+      "hash": "6hUFGCLjqi33JKbqq6d2ENTWU2E3BMWvjHEeWdgeBYvX",
+      "refused": true
+    },
+    {
+      "step": 3,
+      "label": "a per-trade cap above the total cap",
+      "account": "cl-dev.testnet",
+      "method": "follow",
+      "ok": false,
+      "hash": "AEW3Bjg2hMjDfo3aNAFpMMPw1XsU6VzJeRbFKYS5Vr5u",
+      "refused": true
+    },
+    {
+      "step": 3,
+      "label": "an expiry in the past",
+      "account": "cl-dev.testnet",
+      "method": "follow",
+      "ok": false,
+      "hash": "CSYvYCQVUph3eKHMDmgofDbXwc1KS5KnGhKLTyUjNFFF",
+      "refused": true
+    },
+    {
+      "step": 3,
+      "label": "a creator fee above what the follower accepts",
+      "account": "cl-dev.testnet",
+      "method": "follow",
+      "ok": false,
+      "hash": "CzaYStPWetYqtr1c6sQrnDrvaj688Y2PXGtsHFyVYJQx",
+      "refused": true
+    },
+    {
+      "step": 3,
+      "label": "an outsider calling the launch callback",
+      "account": "cl-bob.testnet",
+      "method": "on_launch",
+      "ok": false,
+      "hash": "JFUPu6dNX8nex9mAvuKgUt9fiYVcEPMgMFKDxgKt3oW",
+      "refused": true
+    },
+    {
+      "step": 4,
+      "label": "buy",
+      "account": "cl-dev.testnet",
+      "method": "buy",
+      "ok": true,
+      "hash": "Db8x1j1ry6bjmqTHWKHFbTmMKF9mXNjX4Sd8qhKG4vHN",
+      "gas_tgas": 4.2
+    },
+    {
+      "step": 5,
+      "label": "sell",
+      "account": "cl-dev.testnet",
+      "method": "sell",
+      "ok": true,
+      "hash": "H8n52NFvsdb4ZcwEs6R1Pdaoc7STtQFHumEdPzza1UcA",
+      "gas_tgas": 4.3
+    },
+    {
+      "step": 6,
+      "label": "buy",
+      "account": "cl-dev.testnet",
+      "method": "buy",
+      "ok": true,
+      "hash": "3Cd5aRQeRYLyU9nvqsBnQ29FZa4rrTH2X3zHYC1sGZM3",
+      "gas_tgas": 4.2
+    },
+    {
+      "step": 7,
+      "label": "revoke",
+      "account": "cl-ann.testnet",
+      "method": "revoke",
+      "ok": true,
+      "hash": "BRhvkSuHXaUfbbeBm7GMktbeEQ8X43syWKg6Z6eyEtqC",
+      "gas_tgas": 2.6
+    },
+    {
+      "step": 7,
+      "label": "the creator buys again",
+      "account": "cl-dev.testnet",
+      "method": "buy",
+      "ok": true,
+      "hash": "2Yus5BZLe2miHCozYehs3U1ZSCkofw8Zmd9rW84kY9RY",
+      "gas_tgas": 2.5
+    },
+    {
+      "step": 7,
+      "label": "revoking twice",
+      "account": "cl-ann.testnet",
+      "method": "revoke",
+      "ok": false,
+      "hash": "7veJ5dK8Ss7nQssfWT3JGiEZjd8UuoPzL58msrKjQdG3",
+      "refused": true
+    },
+    {
+      "step": 8,
+      "label": "cl-dev.testnet claims 0.02 NEAR",
+      "account": "cl-dev.testnet",
+      "method": "claim",
+      "ok": true,
+      "hash": "7LivZry1jK7UCe7utNFB6R6JhM9XmCy8quCpF2PjhZEh",
+      "gas_tgas": 2.1
+    },
+    {
+      "step": 8,
+      "label": "cl-ann.testnet claims 0.2542 NEAR",
+      "account": "cl-ann.testnet",
+      "method": "claim",
+      "ok": true,
+      "hash": "ENkRqrsnno35Wd5auRHC6VnnZV2Mi1p8btPuMFjdkbVp",
+      "gas_tgas": 2.1
+    },
+    {
+      "step": 8,
+      "label": "cl-bob.testnet claims 0.5161 NEAR",
+      "account": "cl-bob.testnet",
+      "method": "claim",
+      "ok": true,
+      "hash": "HnGYXFP6RArjmxFmE2BZQQUs6rtFGd1iTnhfbS8UVUVH",
+      "gas_tgas": 2
+    },
+    {
+      "step": 9,
+      "label": "withdraw",
+      "account": "cl-ann.testnet",
+      "method": "withdraw_token",
+      "ok": true,
+      "hash": "DH9ZTkN1KijM7zrUbT6hM1sjukG9UQfJfte2WQD2DC46",
+      "gas_tgas": 3
+    },
+    {
+      "step": 9,
+      "label": "send half back",
+      "account": "cl-ann.testnet",
+      "method": "ft_transfer_call",
+      "ok": true,
+      "hash": "GiJbdFMcTFTQVm78PvvFUzaH6gTBpExQPPhBS8VtNz19",
+      "gas_tgas": 2.6
+    }
+  ]
+}

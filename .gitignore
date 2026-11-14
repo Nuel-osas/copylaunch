@@ -1,0 +1,11 @@
+target/
+node_modules/
+dist/
+.env
+.env.*
+*.log
+.DS_Store
+# testnet keys made by scripts/ live here and never leave this machine
+.keys/
+.work/
+build/
