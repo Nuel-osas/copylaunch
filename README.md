@@ -203,6 +203,15 @@ Not measured on chain: the gas of a buy with 32 followers.
   testnet; signing through a browser wallet was not exercised by an automated test. Every contract
   method it calls is exercised by `make demo` with real testnet transactions.
 
+## Why it does not use NEAR Intents
+
+NEAR Intents (`intents.near`) and its 1Click API run on mainnet only: `intents.testnet` holds no
+contract and the Intents documentation describes no testnet. CopyLaunch's copies fill on its own
+curve, which Intents cannot reach, so Intents would only sit at the edges: a follower could fund an
+allowance with USDC from Base, Solana or Ethereum through 1Click (wNEAR delivered to the follower,
+then deposited with `ft_transfer_call`), and claimed proceeds could leave the same way. That needs a
+mainnet deployment and wNEAR support in `follow`. Neither is built.
+
 ## Repository
 
 | Path | What |
