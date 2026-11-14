@@ -49,8 +49,12 @@ fn paid_to(who: &str) -> u128 {
         .sum()
 }
 
-/// A launchpad with one live token, FROG, launched by `dev.test`.
+/// A launchpad with one live token, FROG, launched by `dev.test`. Starts from empty storage, so a
+/// test can build several independent launchpads.
 fn pad() -> CopyLaunch {
+    near_sdk::mock::with_mocked_blockchain(|b| {
+        b.take_storage();
+    });
     as_user(PAD, 0, T0);
     let mut c = CopyLaunch::new();
     launch(&mut c, "frog", "dev.test");
@@ -308,7 +312,7 @@ fn revoking_and_following_again_starts_a_new_allowance_from_zero() {
     let second = follow(&mut c, "fan.test", "dev.test", 3 * N, N, T0 + HOUR, T0 + 3);
     assert!(second.id > first.id);
     assert_eq!(second.spent.0, 0);
-    assert_eq!(c.get_copied(acc("fan.test"), acc("dev.test"), "frog".into()).0, 0, "the old copies are not tracked by the new allowance");
+    assert_eq!(c.get_copied(acc("fan.test"), acc("dev.test"), "frog".into()).tokens.0, 0, "the old copies are not tracked by the new allowance");
 }
 
 // ---- one price for the creator and the followers ----------------------------------------------
@@ -378,37 +382,156 @@ fn a_dust_buy_is_refused() {
     buy(&mut c, "dev.test", MIN_TRADE - 1, T0);
 }
 
-// ---- the creator fee --------------------------------------------------------------------------
+// ---- the creator fee: a share of what followers take out beyond what they put in --------------
+
+fn position(c: &CopyLaunch, follower: &str) -> PositionView {
+    c.get_copied(acc(follower), acc("dev.test"), "frog".into())
+}
 
 #[test]
-fn the_creator_fee_is_taken_from_each_copy_and_is_claimable_by_the_creator() {
+fn copied_buys_pay_the_creator_nothing() {
+    let mut c = pad();
+    follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+    let t = buy(&mut c, "dev.test", 2 * N, T0 + 1);
+    assert_eq!(t.copies[0].fee.0, 0);
+    assert_eq!(c.get_claimable(acc("dev.test")).0, 0);
+    let p = position(&c, "fan.test");
+    assert_eq!((p.tokens.0, p.paid.0, p.taken.0, p.fees.0), (t.copies[0].tokens.0, 2 * N, 0, 0));
+}
+
+#[test]
+fn a_creator_trading_back_and_forth_earns_nothing_from_followers() {
+    // The drain this rule stops: buy with every follower copying at the highest fee, sell, repeat.
     let mut c = pad();
     as_user("dev.test", SET_FEE_DEPOSIT, T0);
-    c.set_fee(250); // 2.5%
-    follow(&mut c, "fan1.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
-    follow(&mut c, "fan2.test", "dev.test", 5 * N, N, T0 + HOUR, T0);
-    let t = buy(&mut c, "dev.test", 4 * N, T0 + 1);
-    assert_eq!(t.copies[0].fee.0, 2 * N * 250 / 10_000);
-    assert_eq!(t.copies[1].fee.0, N * 250 / 10_000);
-    let fees = 3 * N * 250 / 10_000;
-    assert_eq!(c.get_claimable(acc("dev.test")).0, fees);
-    let s = c.get_creator(acc("dev.test"));
-    assert_eq!((s.fees_earned.0, s.copied_volume.0, s.copies, s.followers), (fees, 3 * N, 2, 2));
+    c.set_fee(MAX_FEE_BPS);
+    for i in 0..MAX_FOLLOWERS {
+        follow(&mut c, &format!("fan{i}.test"), "dev.test", 5 * N, N, T0 + HOUR, T0);
+    }
+    for round in 0..5u64 {
+        let b = buy(&mut c, "dev.test", N, T0 + 1 + 2 * round);
+        assert_eq!(b.copies.len(), MAX_FOLLOWERS);
+        let s = sell(&mut c, "dev.test", b.tokens.0, T0 + 2 + 2 * round);
+        assert!(s.copies.iter().all(|f| f.fee.0 == 0));
+    }
+    assert_eq!(c.get_claimable(acc("dev.test")).0, 0, "the creator earned no fee");
+    assert_eq!(c.get_creator(acc("dev.test")).fees_earned.0, 0);
+    for i in 0..MAX_FOLLOWERS {
+        let f = format!("fan{i}.test");
+        // 5 NEAR copied in; only the two flat record fees per round, plus rounding, stay behind.
+        let lost = 5 * N - c.get_claimable(acc(&f)).0;
+        assert!(lost <= 10 * FILL_STORAGE_FEE + 1_000, "{f} lost {lost} yocto");
+    }
+}
 
-    as_user("dev.test", 1, T0 + 2);
-    assert_eq!(c.claim().0, fees);
-    assert_eq!(paid_to("dev.test"), fees + 1);
+#[test]
+fn selling_in_small_pieces_earns_the_creator_nothing_either() {
+    // On a curve, the first part of a position sells back for more than its average cost. A fee on
+    // each partial sell would pay the creator on a round trip that made nobody any money.
+    let mut c = pad();
+    as_user("dev.test", SET_FEE_DEPOSIT, T0);
+    c.set_fee(MAX_FEE_BPS);
+    follow(&mut c, "fan.test", "dev.test", 5 * N, 3 * N, T0 + HOUR, T0);
+    let b = buy(&mut c, "dev.test", 3 * N, T0 + 1);
+    let mut left = b.tokens.0;
+    for i in 0..9u64 {
+        let piece = if i == 8 { left } else { b.tokens.0 / 9 };
+        let s = sell(&mut c, "dev.test", piece, T0 + 2 + i);
+        assert_eq!(s.copies[0].fee.0, 0, "piece {i}");
+        left -= piece;
+    }
     assert_eq!(c.get_claimable(acc("dev.test")).0, 0);
+    let p = position(&c, "fan.test");
+    assert!(p.taken.0 < p.paid.0, "the follower never got more out than they put in");
+}
+
+#[test]
+fn the_creator_takes_their_share_only_of_what_the_follower_takes_out_above_cost() {
+    let mut c = pad();
+    as_user("dev.test", SET_FEE_DEPOSIT, T0);
+    c.set_fee(1_000); // 10%
+    follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+    let b = buy(&mut c, "dev.test", 2 * N, T0 + 1);
+    buy(&mut c, "ann.test", 20 * N, T0 + 2); // somebody else pushes the price up
+    as_user("anyone.test", 0, T0 + 3);
+    let q = c.quote_sell("frog".into(), U128(b.tokens.0), acc("dev.test"));
+    let s = sell(&mut c, "dev.test", b.tokens.0, T0 + 3);
+    let f = &s.copies[0];
+    let taken = f.near.0 + f.fee.0;
+    assert!(taken > 2 * N, "the follower made money");
+    assert_eq!(f.fee.0, (taken - 2 * N) * 1_000 / 10_000);
+    assert_eq!(q.copies[0].fee.0, f.fee.0, "the quote shows the fee before the creator signs");
+    assert_eq!(c.get_claimable(acc("dev.test")).0, f.fee.0);
+    assert_eq!(c.get_claimable(acc("fan.test")).0, f.near.0);
+    assert_eq!(c.get_creator(acc("dev.test")).fees_earned.0, f.fee.0);
+    let p = position(&c, "fan.test");
+    assert_eq!((p.tokens.0, p.paid.0, p.taken.0, p.fees.0), (0, 2 * N, taken, f.fee.0));
+}
+
+#[test]
+fn split_sells_in_profit_pay_the_same_total_fee_as_one_sell() {
+    // Once the follower is in profit, the fee is a share of the running total, so splitting the
+    // sell neither adds nor saves fee (up to rounding).
+    let run = |pieces: u128| {
+        let mut c = pad();
+        as_user("dev.test", SET_FEE_DEPOSIT, T0);
+        c.set_fee(1_000);
+        follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+        let b = buy(&mut c, "dev.test", 2 * N, T0 + 1);
+        buy(&mut c, "ann.test", 20 * N, T0 + 2);
+        let mut left = b.tokens.0;
+        for i in 0..pieces {
+            let piece = if i + 1 == pieces { left } else { b.tokens.0 / pieces };
+            sell(&mut c, "dev.test", piece, T0 + 3 + i as u64);
+            left -= piece;
+        }
+        let p = position(&c, "fan.test");
+        (p.fees.0, p.taken.0)
+    };
+    let (one_fee, one_taken) = run(1);
+    let (split_fee, split_taken) = run(6);
+    // Selling in pieces gets a slightly different price path; the fee follows the profit exactly.
+    assert_eq!(one_fee, (one_taken - 2 * N) / 10);
+    assert!(split_fee.abs_diff((split_taken - 2 * N) / 10) <= 6, "split fee {split_fee} vs profit {}", split_taken - 2 * N);
+}
+
+#[test]
+fn a_follower_selling_at_a_loss_pays_no_fee() {
+    let mut c = pad();
+    buy(&mut c, "ann.test", 10 * N, T0); // an early holder
+    follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+    let b = buy(&mut c, "dev.test", 2 * N, T0 + 1);
+    let held = bal(&c, "ann.test");
+    sell(&mut c, "ann.test", held, T0 + 2); // the price falls
+    let s = sell(&mut c, "dev.test", b.tokens.0, T0 + 3);
+    assert_eq!(s.copies[0].fee.0, 0);
+    assert!(s.copies[0].near.0 < 2 * N);
+    assert_eq!(c.get_claimable(acc("dev.test")).0, 0);
+}
+
+#[test]
+fn the_fee_rule_on_its_own() {
+    let p = Position { tokens: 0, paid: 100, taken: 0, fees: 0 };
+    assert_eq!(p.fee_on(90, 1_000), 0, "below cost: nothing");
+    assert_eq!(p.fee_on(100, 1_000), 0, "back to even: nothing");
+    assert_eq!(p.fee_on(150, 1_000), 5, "10% of the 50 above cost");
+    let later = Position { tokens: 0, paid: 100, taken: 150, fees: 5 };
+    assert_eq!(later.fee_on(50, 1_000), 5, "only the new profit is charged");
+    assert_eq!(Position { tokens: 0, paid: 0, taken: 0, fees: 0 }.fee_on(10, MAX_FEE_BPS), 2);
+    assert_eq!(Position { tokens: 0, paid: 0, taken: 0, fees: 0 }.fee_on(10, 10_000), 10, "never more than the sell itself");
 }
 
 #[test]
 fn raising_the_fee_later_does_not_touch_an_allowance_already_granted() {
     let mut c = pad();
-    follow(&mut c, "fan.test", "dev.test", 5 * N, N, T0 + HOUR, T0); // granted at the default 1%
+    follow(&mut c, "fan.test", "dev.test", 5 * N, N, T0 + HOUR, T0); // granted at the default
     as_user("dev.test", SET_FEE_DEPOSIT, T0 + 1);
     c.set_fee(MAX_FEE_BPS);
-    let t = buy(&mut c, "dev.test", N, T0 + 2);
-    assert_eq!(t.copies[0].fee.0, N / 100);
+    let b = buy(&mut c, "dev.test", N, T0 + 2);
+    buy(&mut c, "ann.test", 20 * N, T0 + 3);
+    let s = sell(&mut c, "dev.test", b.tokens.0, T0 + 4);
+    let f = &s.copies[0];
+    assert_eq!(f.fee.0, (f.near.0 + f.fee.0 - N) * DEFAULT_FEE_BPS as u128 / 10_000);
     assert_eq!(allowance(&c, "fan.test", "dev.test").fee_bps, DEFAULT_FEE_BPS);
 }
 
@@ -423,8 +546,8 @@ fn a_follow_fails_if_the_creator_raised_the_fee_above_what_the_follower_accepted
 }
 
 #[test]
-#[should_panic(expected = "the fee can be at most 10%")]
-fn a_fee_above_ten_percent_is_refused() {
+#[should_panic(expected = "the fee can be at most 20% of profit")]
+fn a_fee_above_twenty_percent_of_profit_is_refused() {
     let mut c = pad();
     as_user("dev.test", SET_FEE_DEPOSIT, T0);
     c.set_fee(MAX_FEE_BPS + 1);
@@ -451,9 +574,9 @@ fn when_the_creator_sells_half_each_follower_sells_half_of_what_they_copied_at_t
     assert_eq!(s.copies.len(), 1);
     let fill = &s.copies[0];
     assert!(fill.tokens.0 <= copied / 2 && copied / 2 - fill.tokens.0 <= 1, "half of the copied position, rounded down");
-    assert_eq!(fill.fee.0, 0, "no creator fee on the way out");
+    assert_eq!(fill.fee.0, 0, "the follower has not got their money back yet, so no fee");
     assert_eq!(bal(&c, "fan.test"), copied - fill.tokens.0);
-    assert_eq!(c.get_copied(acc("fan.test"), acc("dev.test"), "frog".into()).0, copied - fill.tokens.0);
+    assert_eq!(position(&c, "fan.test").tokens.0, copied - fill.tokens.0);
     assert_eq!(c.get_claimable(acc("fan.test")).0, fill.near.0);
     assert_eq!(paid_to("dev.test"), s.near.0 + 1, "the creator is paid in the same call");
 
@@ -472,11 +595,67 @@ fn a_creator_selling_everything_takes_the_followers_copies_out_with_them() {
     sell(&mut c, "dev.test", b.tokens.0, T0 + 2);
     assert_eq!(bal(&c, "dev.test"), 0);
     assert_eq!(bal(&c, "fan.test"), 0);
-    // Nobody front-ran anybody: the follower gets back what reached the curve, less the two
-    // flat fees and the creator fee, up to rounding.
-    let reached_curve = 2 * N - 2 * N / 100 - FILL_STORAGE_FEE;
+    // Nobody front-ran anybody: the follower gets back what reached the curve, less the second
+    // flat fee, up to rounding, and pays no creator fee on a round trip.
+    let reached_curve = 2 * N - FILL_STORAGE_FEE;
     let back = c.get_claimable(acc("fan.test")).0;
     assert!(reached_curve - FILL_STORAGE_FEE - back < 1_000, "follower lost {} yocto to price", reached_curve - FILL_STORAGE_FEE - back);
+}
+
+// ---- no side door: a creator cannot take tokens out while followers hold copies --------------
+
+#[test]
+#[should_panic(expected = "people copying you hold this token")]
+fn a_creator_cannot_withdraw_a_token_their_followers_hold_copies_of() {
+    let mut c = pad();
+    follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+    let b = buy(&mut c, "dev.test", N, T0 + 1);
+    as_user("dev.test", WITHDRAW_DEPOSIT, T0 + 2);
+    c.withdraw_token("frog".into(), U128(b.tokens.0)).detach();
+}
+
+#[test]
+fn the_creator_can_withdraw_once_no_follower_holds_copies() {
+    // After the follower revokes, after the follower sold the copies themselves, and after expiry.
+    let cases: [(&str, fn(&mut CopyLaunch)); 3] = [
+        ("revoked", |c| {
+            as_user("fan.test", 1, T0 + 2);
+            c.revoke(acc("dev.test"));
+        }),
+        ("sold by the follower", |c| {
+            let held = c.get_balance("frog".into(), acc("fan.test")).0;
+            as_user("fan.test", 1, T0 + 2);
+            c.sell("frog".into(), U128(held), U128(0));
+        }),
+        ("expired", |_| {}),
+    ];
+    for (name, step) in cases {
+        let mut c = pad();
+        follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+        let b = buy(&mut c, "dev.test", N, T0 + 1);
+        step(&mut c);
+        let when = if name == "expired" { T0 + HOUR } else { T0 + 3 };
+        as_user("dev.test", WITHDRAW_DEPOSIT, when);
+        c.withdraw_token("frog".into(), U128(b.tokens.0)).detach();
+        assert_eq!(bal(&c, "dev.test"), 0, "{name}");
+    }
+}
+
+#[test]
+fn a_creator_can_still_withdraw_tokens_of_a_coin_nobody_copied() {
+    let mut c = pad();
+    launch(&mut c, "toad", "dev.test");
+    follow(&mut c, "fan.test", "dev.test", 5 * N, 2 * N, T0 + HOUR, T0);
+    buy(&mut c, "dev.test", N, T0 + 1); // frog: copied
+    as_user("dev.test", N, T0 + 2);
+    let toad = c.buy("toad".into(), U128(0)); // toad: copied too, so the follower holds both
+    // The follower sells their toad copies; the creator may now take toad out but not frog.
+    let held = c.get_balance("toad".into(), acc("fan.test")).0;
+    as_user("fan.test", 1, T0 + 3);
+    c.sell("toad".into(), U128(held), U128(0));
+    as_user("dev.test", WITHDRAW_DEPOSIT, T0 + 4);
+    c.withdraw_token("toad".into(), U128(toad.tokens.0)).detach();
+    assert_eq!(c.get_balance("toad".into(), acc("dev.test")).0, 0);
 }
 
 #[test]

@@ -273,7 +273,7 @@ function Hero({ chain }) {
           </li>
         </ul>
         <div className="flow-row flow-out">
-          one fill on the curve · <b>one price for all three</b> · creator earns 1% of copies
+          one fill on the curve · <b>one price for all three</b> · the creator earns only from followers' profit
         </div>
       </figure>
 
@@ -568,7 +568,7 @@ function TradeDrawer({ symbol, chain, mine, me, send, busy, onClose, onFollow })
                         <li key={c.follower}>
                           <Acct id={c.follower} />
                           <span>{side === 'buy' ? `${fmtNear(c.near, 3)} NEAR` : `${fmtTokens(c.tokens)}`}</span>
-                          <span className="muted">{side === 'buy' ? `${fmtTokens(c.tokens)} · fee ${fmtNear(c.fee, 4)}` : `${fmtNear(c.near, 4)} NEAR`}</span>
+                          <span className="muted">{side === 'buy' ? `${fmtTokens(c.tokens)}, no fee` : `${fmtNear(c.near, 4)} NEAR${BigInt(c.fee) > 0n ? `, ${fmtNear(c.fee, 4)} of profit to you` : ', no fee'}`}</span>
                         </li>
                       ))}
                     </ul>
@@ -738,12 +738,13 @@ function FollowSection({ chain, me, target, setTarget, send, busy }) {
                 price, in their transaction.
               </li>
               <li>
-                Each copy pays them <b>{fee === null ? '…' : `${fee / 100}%`}</b>. The fee is fixed for this allowance even if they
-                raise it later.
+                Copies cost you no fee. They earn <b>{fee === null ? '…' : `${fee / 100}%`}</b> of your profit, and only once you have
+                taken out more than you put in. The share is fixed for this allowance even if they raise it later.
               </li>
               <li>
-                When they sell part of a position, the tokens your copies bought sell in the same share, at the same price. Tokens
-                you bought yourself are never touched.
+                When they sell part of a position, the tokens your copies bought sell in the same share, at the same price. While
+                you hold copies, they cannot take that token out of the launchpad; they can only sell it here, with you. Tokens you
+                bought yourself are never touched.
               </li>
               <li>
                 It ends <b>{new Date(expires).toLocaleString()}</b> ({untilText(expires, now)}), when the cap is spent, or when you
@@ -796,10 +797,10 @@ function TradeRow({ trade, me }) {
         <ul className="trade-copies">
           {t.copies.map((c) => (
             <li key={c.follower} className={c.follower === me ? 'me' : ''}>
-              ↳ <Acct id={c.follower} /> {t.side === 'buy' ? `copied ${fmtNear(c.near, 3)} NEAR → ${fmtTokens(c.tokens)}` : `sold ${fmtTokens(c.tokens)} → ${fmtNear(c.near, 3)} NEAR`}
+              ↳ <Acct id={c.follower} /> {t.side === 'buy' ? `copied ${fmtNear(c.near, 3)} NEAR → ${fmtTokens(c.tokens)}` : `sold ${fmtTokens(c.tokens)} → ${fmtNear(c.near, 3)} NEAR${BigInt(c.fee) > 0n ? ` (paid ${fmtNear(c.fee, 4)} of profit to the creator)` : ''}`}
             </li>
           ))}
-          {fee > 0n ? <li className="muted">↳ creator fee {fmtNear(fee, 4)} NEAR · same price for all</li> : null}
+          <li className="muted">↳ same price for all{fee > 0n ? ` · creator earned ${fmtNear(fee, 4)} NEAR of followers' profit` : t.side === 'buy' ? ' · no fee on copies' : ''}</li>
         </ul>
       ) : null}
       {t.closed.length ? (
@@ -842,7 +843,7 @@ function Dashboard({ chain, mine, me, send, busy }) {
   );
   const claimable = BigInt(mine?.claimable ?? 0);
   const feeBps = Number(newFee) * 100;
-  const feeOk = newFee !== '' && Number.isFinite(feeBps) && Number.isInteger(feeBps) && feeBps >= 0 && feeBps <= (cfg?.max_fee_bps ?? 1000);
+  const feeOk = newFee !== '' && Number.isFinite(feeBps) && Number.isInteger(feeBps) && feeBps >= 0 && feeBps <= (cfg?.max_fee_bps ?? 2000);
 
   return (
     <section className="section" id="dashboard">
@@ -883,7 +884,7 @@ function Dashboard({ chain, mine, me, send, busy }) {
                       <dd>{a.copies}</dd>
                     </div>
                     <div>
-                      <dt>Fee</dt>
+                      <dt>Profit share</dt>
                       <dd>{a.fee_bps / 100}%</dd>
                     </div>
                   </dl>
@@ -927,12 +928,12 @@ function Dashboard({ chain, mine, me, send, busy }) {
               if (feeOk) send(`Set fee to ${newFee}%`, 'set_fee', { fee_bps: feeBps }, BigInt(cfg.set_fee_deposit));
             }}
           >
-            <input className="grow" inputMode="decimal" placeholder="New fee in %, e.g. 2.5" value={newFee} onChange={(e) => setNewFee(e.target.value)} />
+            <input className="grow" inputMode="decimal" placeholder="Share of profit in %, e.g. 10" value={newFee} onChange={(e) => setNewFee(e.target.value)} />
             <button className="btn btn-ghost" disabled={!feeOk || !!busy}>
               Set fee
             </button>
           </form>
-          <p className="small muted">Applies to new followers only. Up to {cfg ? cfg.max_fee_bps / 100 : 10}%.</p>
+          <p className="small muted">Your share of followers' profit, never of their buys. Applies to new followers only. Up to {cfg ? cfg.max_fee_bps / 100 : 20}%.</p>
           <ul className="followers">
             {mine?.followers.map((a) => (
               <li key={a.id}>
@@ -1026,7 +1027,8 @@ function Rules({ chain }) {
         ['Curve', `constant product with a virtual reserve of ${fmtNear(c.virtual_near)} NEAR; rounding always favours the curve`],
         ['Smallest buy / copy', `${fmtNear(c.min_trade)} NEAR / ${fmtNear(c.min_copy)} NEAR`],
         ['Record fee', `${fmtNear(c.fill_storage_fee)} NEAR per fill, ${fmtNear(c.follow_storage_fee)} NEAR per follow`],
-        ['Creator fee', `${c.default_fee_bps / 100}% unless the creator sets another, at most ${c.max_fee_bps / 100}%, only on copied buys`],
+        ['Creator fee', `${c.default_fee_bps / 100}% of followers' profit unless the creator sets another, at most ${c.max_fee_bps / 100}%; nothing on copied buys, nothing until a follower has taken out more than they put in`],
+        ['Withdrawals', 'a creator cannot take a token out while anyone copying them holds copies of it; they can only sell it here, with their followers'],
         ['Limits', `${c.max_followers} followers per creator, ${c.max_following} creators per follower, allowances up to ${c.max_allowance_days} days`],
         ['Token contract', `${c.token_code_bytes.toLocaleString()} bytes, sha256 ${c.token_code_sha256.slice(0, 16)}…`],
         ['Admin', 'no owner, no admin or upgrade method, no pause; token accounts have no keys'],

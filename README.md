@@ -3,7 +3,8 @@
 A memecoin launchpad on NEAR testnet where following a creator is an on-chain allowance: a total cap,
 a cap per trade, an end date, revocable at any time. When the creator buys, every follower's allowance
 buys in the same transaction, at the same price as the creator. A copy that would break a limit does
-not happen.
+not happen. The creator earns nothing from copies, only a share of what followers take out beyond what
+they put in.
 
 Built at NEAR HACKATHON 2026. Tracks: Memecoins With Mechanics (`memecoins`), Unstoppable DeFi (`defi`).
 Status: deployed on testnet, not audited, testnet NEAR only.
@@ -12,13 +13,13 @@ Status: deployed on testnet, not audited, testnet NEAR only.
 
 | What | Where |
 | --- | --- |
-| Web app | https://nuel-osas.github.io/copylaunch/ (a token link: `#t/<symbol>`, e.g. [`#t/frog4tt3`](https://nuel-osas.github.io/copylaunch/#t/frog4tt3)) |
-| Launchpad contract | [`copylaunch.testnet`](https://testnet.nearblocks.io/address/copylaunch.testnet), code hash `7D9fBBjom7bPwEUP8QsertjfoawGtYjU5yntCcPsv1x` |
-| Deploy transaction | [`7HjjG2cc…`](https://testnet.nearblocks.io/txns/7HjjG2ccWD1jFHUcPTbD8EkPp1M5PiD5jvACUmrs9Qej), init [`6absJQHg…`](https://testnet.nearblocks.io/txns/6absJQHguLB947DJNRHviT6nxvhNzNEnSsxnwZvapYyf) |
+| Web app | https://nuel-osas.github.io/copylaunch/ (a token link: `#t/<symbol>`, e.g. [`#t/frog4frv`](https://nuel-osas.github.io/copylaunch/#t/frog4frv)) |
+| Launchpad contract | [`copylaunch.testnet`](https://testnet.nearblocks.io/address/copylaunch.testnet), code hash `4D1c2uH5dPT9Dp4sZpFCKRf61LigGtzjS1ETu9beWSwo` |
+| Deploy transactions | first deploy [`7HjjG2cc…`](https://testnet.nearblocks.io/txns/7HjjG2ccWD1jFHUcPTbD8EkPp1M5PiD5jvACUmrs9Qej), init [`6absJQHg…`](https://testnet.nearblocks.io/txns/6absJQHguLB947DJNRHviT6nxvhNzNEnSsxnwZvapYyf); upgrade to the profit-only fee and the withdrawal rule [`FriReWaP…`](https://testnet.nearblocks.io/txns/FriReWaP46HPprjXHDbYeZ3XgeXAqRQnYVXXoGG9qgTi) (state kept: no allowance was live) |
 | Token contract code (one copy per launch) | sha256 `541ae10b335c65d32a0e43d70860272801147acc544c24a0b4c0883cb5dc883c` |
-| Example tokens | [`frog4tt3.copylaunch.testnet`](https://testnet.nearblocks.io/address/frog4tt3.copylaunch.testnet) (the recorded run), [`frog8bw6.copylaunch.testnet`](https://testnet.nearblocks.io/address/frog8bw6.copylaunch.testnet) (NEP-141) |
+| Example tokens | [`frog4frv.copylaunch.testnet`](https://testnet.nearblocks.io/address/frog4frv.copylaunch.testnet) (the recorded run), [`frog4tt3.copylaunch.testnet`](https://testnet.nearblocks.io/address/frog4tt3.copylaunch.testnet) (before the upgrade), [`frog8bw6.copylaunch.testnet`](https://testnet.nearblocks.io/address/frog8bw6.copylaunch.testnet) (NEP-141) |
 | Accounts used by the walkthrough | `cl-dev.testnet` (creator), `cl-ann.testnet` and `cl-bob.testnet` (followers) |
-| Every transaction of the recorded run (42 of 42 checks) | [`docs/testnet-run.json`](docs/testnet-run.json) |
+| Every transaction of the recorded run (50 of 50 checks) | [`docs/testnet-run.json`](docs/testnet-run.json) |
 
 `make build && make check-deployed` rebuilds both contracts and compares them with the code on
 testnet. On the machine that deployed them (macOS, rustc 1.93.1, wasm-opt 133) the hashes match.
@@ -41,6 +42,8 @@ CopyLaunch moves the copy into the contract:
 - The creator's buy and every copy are filled as one batch on the curve and shared out by NEAR paid
   in, so everybody gets the same price. The creator cannot buy first and let followers push the price
   up for them.
+- The creator is paid only out of followers' profit, so trading back and forth to collect fees earns
+  them nothing, and they cannot take their tokens out of the launchpad while followers hold copies.
 
 ## Try it
 
@@ -58,7 +61,7 @@ CopyLaunch moves the copy into the contract:
    See: the allowance under "Dashboard · Creators you copy", with spent / total and a countdown.
 5. Buy as the creator (a second account): open the token, press "Trade". The quote lists every follower's
    copy before you sign. Buy.
-   See: in the feed, the buy with one line per copy, each cut to its own per-trade cap, and the creator fee.
+   See: in the feed, the buy with one line per copy, each cut to its own per-trade cap, and "no fee on copies".
 6. Revoke as the follower: "Revoke and get N NEAR back".
    See: the NEAR back in the wallet in the same transaction; the creator's next buy is not copied.
 
@@ -84,10 +87,14 @@ done
 CREATOR=my-dev.testnet FAN1=my-ann.testnet FAN2=my-bob.testnet make demo
 ```
 
-See: 19 testnet transactions with explorer links and 42 checks, ending in "42 of 42 checks passed".
+See: 23 testnet transactions with explorer links and 50 checks, ending in "50 of 50 checks passed".
 It launches a token, grants two allowances, has the contract refuse five bad grants, copies a buy at one
-price, mirrors a sell, lets one allowance expire, revokes the other, claims, withdraws the token to a
-wallet as plain NEP-141 and sends some back. Takes about two minutes (one step waits for an expiry).
+price with no fee, mirrors a partial sell with no fee (nobody has their money back yet), lets an outside
+buy lift the price, mirrors the creator's exit and checks the fee is exactly 10% of each follower's
+profit, lets one allowance expire, refuses the creator's withdrawal while a follower holds copies,
+revokes, lets the creator withdraw, claims, and moves a token to a wallet as plain NEP-141 and back.
+Takes about three minutes (one step waits for an expiry). In the recorded run the followers got back
+0.5778 NEAR on 0.5 and 1.1716 on 1, and paid the creator 0.0078 and 0.0172.
 
 ### 4. Tests
 
@@ -95,7 +102,7 @@ wallet as plain NEP-141 and sends some back. Takes about two minutes (one step w
 make test
 ```
 
-See: 80 tests pass (4 token, 76 launchpad), with no network and no keys.
+See: 89 tests pass (4 token, 85 launchpad), with no network and no keys.
 
 ## How it works
 
@@ -107,7 +114,7 @@ See: 80 tests pass (4 token, 76 launchpad), with no network and no keys.
 | Per-trade cap | `Allowance::spend` | `OverPerTradeCap`; copies are cut down to it | `a_copy_is_cut_down_to_the_per_trade_cap`, `a_spend_over_the_per_trade_cap_is_refused_and_changes_nothing` |
 | End date | `Allowance::spend` (at or after `expires_at_ns`) | `Expired`; the next trade closes it and its rest becomes claimable | `an_expired_allowance_copies_nothing_and_is_closed_with_the_rest_claimable`, `one_nanosecond_before_expiry_the_copy_still_happens` |
 | Revocable | `revoke` | unspent NEAR sent back in the same call; needs 1 yoctoNEAR (a full-access signature) | `revoking_sends_the_unspent_near_back_and_ends_the_copying`, `revoking_needs_a_full_access_signature` |
-| Fee ceiling | `follow` | the grant fails if the creator's fee is above `max_fee_bps`; later fee rises do not apply | `raising_the_fee_later_does_not_touch_an_allowance_already_granted` |
+| Fee ceiling | `follow` | the grant fails if the creator's profit share is above `max_fee_bps`; later rises do not apply | `raising_the_fee_later_does_not_touch_an_allowance_already_granted` |
 | Bad grants | `follow` | per-trade above total, below 0.05 NEAR, expiry past or over 365 days, self-follow, duplicate | one `should_panic` test each |
 
 The allowance is funded rather than pulled. NEAR has no way for a contract to take native NEAR out of
@@ -121,7 +128,7 @@ of funds.
 2. For each follower: if the allowance has expired it is closed and skipped; otherwise the copy is
    `min(creator's amount, per-trade cap, what is left)`, debited through `Allowance::spend`. Copies under
    0.05 NEAR are skipped.
-3. Each copy pays the creator its fee (1% unless the creator set another, at most 10%).
+3. Copies pay no fee.
 4. The creator's NEAR and every copy's NEAR go into the curve as one fill. The tokens out are shared in
    proportion to NEAR paid in, so the price is the same for all of them.
 5. One `Trade` record holds the creator's fill, each copy and each allowance closed.
@@ -132,8 +139,28 @@ Everything happens in one receipt. If any step fails, none of it happened.
 
 When the creator sells a share of their holding, each live allowance sells the same share of the tokens
 its copies bought for that token, at the same price, in the same transaction. Tokens a follower bought
-themselves are never touched. The creator is paid at once; followers' proceeds wait in `claim`. No fee is
-charged on sells.
+themselves are never touched. The creator is paid at once; followers' proceeds wait in `claim`.
+
+### The creator's fee: a share of profit, measured in cash (`Position::fee_on`)
+
+Each follower's copies of one creator in one token form a position that records the NEAR paid in, the
+NEAR the creator's sells took out, and the fees paid. The creator gets `fee_bps` (10% unless they set
+another, at most 20%) of what has come out beyond what went in. Until a follower has their money back,
+the creator earns nothing.
+
+The rule is measured on cash rather than on prices on purpose. On a curve, the first part of a position
+sells back for more than its average cost, so a fee on each partial sell against average cost would pay
+a creator who sold in small pieces on a round trip that made nobody any money
+(`selling_in_small_pieces_earns_the_creator_nothing_either`). Buying with followers copying and selling,
+over and over, earns the creator nothing either
+(`a_creator_trading_back_and_forth_earns_nothing_from_followers`, 32 followers, highest fee, five rounds).
+
+### No side door (`withdraw_token`)
+
+While anyone with a live allowance for a creator holds tokens their copies bought, the creator cannot
+withdraw that token to a wallet. They can only sell it here, which takes the followers out at the same
+price. Otherwise a creator could move their tokens out and sell them from another account at the price
+their followers' buying pushed up (`a_creator_cannot_withdraw_a_token_their_followers_hold_copies_of`).
 
 ### The token (`contracts/token`)
 
@@ -175,7 +202,7 @@ shows it too).
 | Virtual reserve | 20 NEAR |
 | Smallest buy / smallest copy | 0.01 NEAR / 0.05 NEAR |
 | Flat record fee | 0.005 NEAR per fill, 0.01 NEAR per follow (covers storage) |
-| Creator fee | 1% default, at most 10%, on copied buys only |
+| Creator fee | 10% of followers' profit by default, at most 20%; nothing on copied buys |
 | Followers per creator / creators per follower | 32 / 16 |
 | Longest allowance | 365 days |
 | Launch cost | 1.711 NEAR on testnet today: the token contract's storage plus 0.02 NEAR |
@@ -184,9 +211,10 @@ shows it too).
 
 | What | Value | How |
 | --- | --- | --- |
-| Gas of a buy copied by 2 followers | 4.2 Tgas | `docs/testnet-run.json` |
+| Gas of a buy copied by 2 followers | 4.0 Tgas | `docs/testnet-run.json` |
+| Gas of a sell mirrored by 2 followers, with the profit fee | 4.8 Tgas | same |
 | Gas of a launch (first receipt) | 12.3 Tgas | same |
-| State written by a buy copied by 32 followers with 64-character names | 10,889 bytes; the flat fees collected cover 1.5x its storage cost | unit test `the_flat_fees_cover_the_bytes_even_with_the_longest_account_names` |
+| State written by a buy copied by 32 followers with 64-character names | 12,300 bytes; the flat fees collected cover 1.3x its storage cost | unit test `the_flat_fees_cover_the_bytes_even_with_the_longest_account_names` |
 
 Not measured on chain: the gas of a buy with 32 followers.
 
@@ -194,6 +222,11 @@ Not measured on chain: the gas of a buy with 32 followers.
 
 - Testnet only. Not audited.
 - The launchpad account still has its deployer's key (see Parameters), so the code can still be replaced.
+- Same-price copying protects followers from the creator's own account, not from other accounts the
+  creator controls: a second account could buy before the creator and sell after the followers' buys
+  lift the price. Followers' caps bound what that can cost them.
+- When an allowance ends, the creator's later sells no longer take that follower's copied tokens out,
+  and the withdrawal block stops covering them; the follower sells them when they choose.
 - 32 followers per creator, so one copied trade stays well inside one transaction's gas.
 - Storage is paid by flat fees, sized for the worst case in a unit test, not metered per call.
 - Followers' sell proceeds and expiry refunds wait in `claim` rather than being pushed, so one trade

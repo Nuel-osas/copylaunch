@@ -85,18 +85,18 @@ check(supply === BigInt(cfg.token_supply), `total supply is ${tokens(supply)}, m
 
 heading('Two followers grant the creator a scoped allowance');
 const hour = Date.now() + 3_600_000;
-const soon = Date.now() + 75_000;
-await tx(fan1, 'follow', { creator: CREATOR, per_trade_cap: yocto('0.5').toString(), expires_at_ms: String(hour), max_fee_bps: 100 }, { deposit: yocto('1.5') + BigInt(cfg.follow_storage_fee) }, `${FAN1} follows: 1.5 NEAR in total, 0.5 per trade, one hour`);
-await tx(fan2, 'follow', { creator: CREATOR, per_trade_cap: yocto('1').toString(), expires_at_ms: String(soon), max_fee_bps: 100 }, { deposit: yocto('1') + BigInt(cfg.follow_storage_fee) }, `${FAN2} follows: 1 NEAR in total, 1 per trade, 75 seconds`);
+const soon = Date.now() + 150_000;
+await tx(fan1, 'follow', { creator: CREATOR, per_trade_cap: yocto('0.5').toString(), expires_at_ms: String(hour), max_fee_bps: Number(cfg.default_fee_bps) }, { deposit: yocto('1.5') + BigInt(cfg.follow_storage_fee) }, `${FAN1} follows: 1.5 NEAR in total, 0.5 per trade, one hour`);
+await tx(fan2, 'follow', { creator: CREATOR, per_trade_cap: yocto('1').toString(), expires_at_ms: String(soon), max_fee_bps: Number(cfg.default_fee_bps) }, { deposit: yocto('1') + BigInt(cfg.follow_storage_fee) }, `${FAN2} follows: 1 NEAR in total, 1 per trade, 150 seconds`);
 let a1 = await allowance(FAN1);
 let a2 = await allowance(FAN2);
 check(a1.total_cap === yocto('1.5').toString() && a1.per_trade_cap === yocto('0.5').toString() && a1.spent === '0', `${FAN1}'s limits are on chain: cap 1.5, per trade 0.5, spent 0`);
-check(a2.total_cap === yocto('1').toString() && a2.fee_bps === 100, `${FAN2}'s limits are on chain: cap 1, creator fee 1%`);
+check(a2.total_cap === yocto('1').toString() && a2.fee_bps === Number(cfg.default_fee_bps), `${FAN2}'s limits are on chain: cap 1, creator's share ${cfg.default_fee_bps / 100}% of profit`);
 
 heading('Grants the contract refuses');
-await refused(fan1, 'follow', { creator: CREATOR, per_trade_cap: yocto('0.5').toString(), expires_at_ms: String(hour), max_fee_bps: 100 }, { deposit: yocto('1') }, 'you already follow this creator', 'a second allowance for the same creator');
-await refused(creator, 'follow', { creator: FAN1, per_trade_cap: yocto('2').toString(), expires_at_ms: String(hour), max_fee_bps: 100 }, { deposit: yocto('1') }, 'the per-trade cap cannot be larger than the total cap', 'a per-trade cap above the total cap');
-await refused(creator, 'follow', { creator: FAN1, per_trade_cap: yocto('0.5').toString(), expires_at_ms: String(Date.now() - 60_000), max_fee_bps: 100 }, { deposit: yocto('1') }, 'the expiry must be in the future', 'an expiry in the past');
+await refused(fan1, 'follow', { creator: CREATOR, per_trade_cap: yocto('0.5').toString(), expires_at_ms: String(hour), max_fee_bps: Number(cfg.default_fee_bps) }, { deposit: yocto('1') }, 'you already follow this creator', 'a second allowance for the same creator');
+await refused(creator, 'follow', { creator: FAN1, per_trade_cap: yocto('2').toString(), expires_at_ms: String(hour), max_fee_bps: Number(cfg.default_fee_bps) }, { deposit: yocto('1') }, 'the per-trade cap cannot be larger than the total cap', 'a per-trade cap above the total cap');
+await refused(creator, 'follow', { creator: FAN1, per_trade_cap: yocto('0.5').toString(), expires_at_ms: String(Date.now() - 60_000), max_fee_bps: Number(cfg.default_fee_bps) }, { deposit: yocto('1') }, 'the expiry must be in the future', 'an expiry in the past');
 await refused(creator, 'follow', { creator: FAN1, per_trade_cap: yocto('0.5').toString(), expires_at_ms: String(hour), max_fee_bps: 0 }, { deposit: yocto('1') }, "the creator's fee is higher than the fee you accepted", 'a creator fee above what the follower accepts');
 await refused(fan2, 'on_launch', { symbol: SYMBOL, creator: FAN2, deposit: '0' }, {}, 'Method on_launch is private', 'an outsider calling the launch callback');
 
@@ -113,8 +113,8 @@ const p0 = price(yocto('1') - FILL_FEE, t1.tokens);
 const p1 = price(BigInt(c1.near) - BigInt(c1.fee) - FILL_FEE, c1.tokens);
 const p2 = price(BigInt(c2.near) - BigInt(c2.fee) - FILL_FEE, c2.tokens);
 check(close(p0, p1) && close(p0, p2), `one price for all three: ${near(p0 * 10n ** 6n, 6)} NEAR per million tokens`);
-check(c1.fee === (yocto('0.5') / 100n).toString() && c2.fee === (yocto('1') / 100n).toString(), 'each copy paid the creator 1%');
-check((await claimable(CREATOR)) - feesBefore === yocto('0.015'), 'the creator can claim 0.015 NEAR in fees');
+check(c1.fee === '0' && c2.fee === '0', 'copied buys paid the creator nothing');
+check((await claimable(CREATOR)) === feesBefore, 'the creator earned no fee from the copies');
 a1 = await allowance(FAN1);
 check(a1.spent === yocto('0.5').toString() && a1.remaining === yocto('1').toString(), `${FAN1}'s allowance: 0.5 spent, 1 left`);
 check((await held(FAN1)) === BigInt(c1.tokens), `${FAN1} holds ${tokens(c1.tokens)} ${SYMBOL.toUpperCase()}`);
@@ -128,11 +128,37 @@ check(s1.copies.length === 2, 'both followers were taken out with the creator');
 // The creator sold floor(T/2) of T tokens, so the follower's share rounds down: at most one unit under half.
 const half = BigInt(c1.tokens) / 2n;
 check(BigInt(sc1.tokens) <= half && half - BigInt(sc1.tokens) <= 1n, `${FAN1} sold half of the copied tokens (rounded down, to the unit)`);
-check(sc1.fee === '0', 'no creator fee on the way out');
+check(s1.copies.every((c) => c.fee === '0'), 'no fee: no follower has their money back yet');
 const ps = price(BigInt(s1.near) + FILL_FEE, s1.tokens);
 const pf = price(BigInt(sc1.near) + FILL_FEE, sc1.tokens);
 check(close(ps, pf), 'the creator and the follower got the same price');
 check((await claimable(FAN1)) - before1 === BigInt(sc1.near), `${FAN1} can claim ${near(sc1.near)} NEAR`);
+
+heading(`${FAN2} buys 4 NEAR on their own: not copied, and it lifts the price`);
+const own2 = await tx(fan2, 'buy', { symbol: SYMBOL, min_tokens_out: '0' }, { deposit: yocto('4') }, `${FAN2}'s own buy`);
+check(own2.value.copies.length === 0, 'nobody follows them, so nothing is copied');
+const fan2OwnTokens = BigInt(own2.value.tokens);
+
+heading('The creator sells the rest: followers in profit pay the creator 10% of the profit, and only of profit');
+const position = (who) => view(CONTRACT, 'get_copied', { follower: who, creator: CREATOR, symbol: SYMBOL });
+const pos1 = await position(FAN1);
+const pos2 = await position(FAN2);
+const fee2Before = await claimable(CREATOR);
+const rest = await held(CREATOR);
+const sell2 = await tx(creator, 'sell', { symbol: SYMBOL, amount: rest.toString(), min_near_out: '0' }, { deposit: 1n }, 'sell');
+const s2 = sell2.value;
+let feesNow = 0n;
+for (const [who, pos] of [[FAN1, pos1], [FAN2, pos2]]) {
+  const f = s2.copies.find((c) => c.follower === who);
+  const takenAfter = BigInt(pos.taken) + BigInt(f.near) + BigInt(f.fee);
+  const owed = takenAfter > BigInt(pos.paid) ? ((takenAfter - BigInt(pos.paid)) * BigInt(cfg.default_fee_bps)) / 10_000n : 0n;
+  const expected = owed > BigInt(pos.fees) ? owed - BigInt(pos.fees) : 0n;
+  feesNow += BigInt(f.fee);
+  check(BigInt(f.fee) === expected, `${who}: paid ${near(pos.paid)}, got back ${near(takenAfter)} in total, fee ${near(f.fee, 6)} = ${cfg.default_fee_bps / 100}% of ${near(takenAfter > BigInt(pos.paid) ? takenAfter - BigInt(pos.paid) : 0n, 6)} profit`);
+}
+check(feesNow > 0n, 'the creator earned a share of real profit');
+check((await claimable(CREATOR)) - fee2Before === feesNow, `the creator can claim ${near(feesNow, 6)} NEAR in fees`);
+check((await held(FAN2)) === fan2OwnTokens, `${FAN2}'s own tokens were not sold`);
 
 heading(`${FAN2}'s allowance expires: the next copy does not happen`);
 const wait = soon - Date.now() + 6_000;
@@ -150,6 +176,9 @@ check((await held(FAN2)) === fan2Tokens, `${FAN2}'s tokens did not change`);
 check((await allowance(FAN2)) === null, `${FAN2} no longer has an allowance`);
 check((await claimable(FAN2)) - fan2Claim === BigInt(t2.closed[0].refunded), `${FAN2}'s unspent NEAR is claimable`);
 
+heading('The creator cannot take the token out while a follower holds copies of it');
+await refused(creator, 'withdraw_token', { symbol: SYMBOL, amount: (await held(CREATOR)).toString() }, { deposit: BigInt(cfg.withdraw_deposit) }, 'people copying you hold this token', `${CREATOR} tries to withdraw`);
+
 heading(`${FAN1} revokes: the unspent NEAR is back in the wallet in the same transaction`);
 a1 = await allowance(FAN1);
 const walletBefore = await balanceOf(FAN1);
@@ -162,6 +191,9 @@ const buy3 = await tx(creator, 'buy', { symbol: SYMBOL, min_tokens_out: '0' }, {
 check(buy3.value.copies.length === 0, 'nobody copied: there are no allowances left');
 check((await held(FAN1)) === fan1Tokens, `${FAN1} keeps the tokens already bought`);
 await refused(fan1, 'revoke', { creator: CREATOR }, { deposit: 1n }, 'you do not follow this creator', 'revoking twice');
+const creatorOut = await held(CREATOR);
+await tx(creator, 'withdraw_token', { symbol: SYMBOL, amount: creatorOut.toString() }, { deposit: BigInt(cfg.withdraw_deposit) }, 'with no follower holding copies, the creator may withdraw');
+check(BigInt(await view(TOKEN, 'ft_balance_of', { account_id: CREATOR })) === creatorOut, `${TOKEN} says ${CREATOR} holds ${tokens(creatorOut)}`);
 
 heading('Everybody claims what is waiting for them');
 for (const who of [creator, fan1, fan2]) {
@@ -199,6 +231,7 @@ const result = {
   checks,
   failed: failures,
   copied_buy_gas_tgas: Number(tgas(buy1.gas)),
+  copied_sell_gas_tgas: Number(tgas(sell2.gas)),
   transactions: txs,
 };
 fs.mkdirSync(path.join(root, 'docs'), { recursive: true });

@@ -48,9 +48,11 @@ pub const TOKEN_REGISTRATION: u128 = ONE_NEAR / 800;
 pub const MIN_TRADE: u128 = ONE_NEAR / 100;
 /// The smallest copy. Below this the flat fee would eat the trade.
 pub const MIN_COPY: u128 = ONE_NEAR / 20;
-/// A creator who never set a fee charges this: 1% of each copied buy.
-pub const DEFAULT_FEE_BPS: u16 = 100;
-pub const MAX_FEE_BPS: u16 = 1_000;
+/// A creator who never set a fee takes this share of a follower's profit, and only of profit: it is
+/// charged when the creator's sell takes the follower's copied tokens out for more than they cost.
+/// Copied buys carry no fee, so trading back and forth earns the creator nothing.
+pub const DEFAULT_FEE_BPS: u16 = 1_000;
+pub const MAX_FEE_BPS: u16 = 2_000;
 /// Followers one creator can have. Bounds the gas of a copied trade.
 pub const MAX_FOLLOWERS: usize = 32;
 /// Creators one account can follow.
@@ -120,9 +122,9 @@ pub enum Side {
 #[derive(Clone, Debug)]
 pub struct CopyFill {
     pub follower: AccountId,
-    /// Buy: NEAR taken from the allowance. Sell: NEAR credited to the follower.
+    /// Buy: NEAR taken from the allowance. Sell: NEAR credited to the follower, after the fee.
     pub near: U128,
-    /// The creator's fee out of `near`. Always zero on a sell.
+    /// The creator's share of this follower's profit. Zero on every buy, and on a sell at a loss.
     pub fee: U128,
     pub tokens: U128,
 }
@@ -151,6 +153,34 @@ pub struct Trade {
     pub timestamp_ms: u64,
     pub copies: Vec<CopyFill>,
     pub closed: Vec<Closed>,
+}
+
+/// One follower's copies of one creator's trades in one token, under one allowance.
+///
+/// The creator's fee is measured on cash, not on prices: it is a share of what the follower has
+/// taken out of this position beyond everything they put in. Until a follower has their money back,
+/// the creator earns nothing, however the sells are split.
+#[near(serializers = [borsh])]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct Position {
+    /// Tokens the copies bought and the creator's sells have not yet taken out.
+    pub tokens: u128,
+    /// NEAR the follower's allowance spent on copied buys of this token.
+    pub paid: u128,
+    /// NEAR the creator's sells have returned to the follower, before the creator's fee.
+    pub taken: u128,
+    /// NEAR paid to the creator out of this position so far.
+    pub fees: u128,
+}
+
+impl Position {
+    /// The creator's fee on a further `net` taken out, at `fee_bps`: whatever brings the total paid
+    /// to `fee_bps` of the profit so far, and never more than `net` itself.
+    pub fn fee_on(&self, net: u128, fee_bps: u16) -> u128 {
+        let taken = self.taken + net;
+        let owed = if taken > self.paid { (taken - self.paid) * fee_bps as u128 / 10_000 } else { 0 };
+        owed.saturating_sub(self.fees).min(net)
+    }
 }
 
 #[near(serializers = [borsh])]
@@ -186,8 +216,8 @@ pub struct CopyLaunch {
     followers: LookupMap<AccountId, Vec<AccountId>>,
     following: LookupMap<AccountId, Vec<AccountId>>,
     fee_bps: LookupMap<AccountId, u16>,
-    /// (allowance id, symbol) -> tokens bought by copies under that allowance and not yet sold.
-    copied: LookupMap<(u64, String), u128>,
+    /// (allowance id, symbol) -> tokens bought by copies under that allowance and not yet sold, and their cost.
+    copied: LookupMap<(u64, String), Position>,
     claimable: LookupMap<AccountId, u128>,
     trades: Vector<Trade>,
     stats: LookupMap<AccountId, CreatorStats>,
@@ -248,6 +278,14 @@ pub struct HoldingView {
 }
 
 #[near(serializers = [json])]
+pub struct PositionView {
+    pub tokens: U128,
+    pub paid: U128,
+    pub taken: U128,
+    pub fees: U128,
+}
+
+#[near(serializers = [json])]
 pub struct QuoteView {
     /// Buy: tokens the trader gets. Sell: NEAR the trader gets.
     pub own: U128,
@@ -297,7 +335,6 @@ struct CopyBuy {
     /// The allowance as it will be after this copy.
     allowance: Allowance,
     gross: u128,
-    fee: u128,
     net: u128,
     tokens: u128,
 }
@@ -314,6 +351,11 @@ struct CopySell {
     allowance_id: u64,
     tokens: u128,
     gross: u128,
+    /// The follower's position before this sell.
+    position: Position,
+    fee_bps: u16,
+    /// The creator's fee on this sell, from `Position::fee_on`.
+    fee: u128,
 }
 
 struct SellPlan {
@@ -434,6 +476,7 @@ impl CopyLaunch {
 
     /// Buys `symbol` with the attached NEAR. If the caller has followers, each live allowance
     /// copies the buy inside its limits, and the caller and every follower get the same price.
+    /// Copies pay no creator fee.
     #[payable]
     pub fn buy(&mut self, symbol: String, min_tokens_out: U128) -> Trade {
         let buyer = env::predecessor_account_id();
@@ -446,20 +489,20 @@ impl CopyLaunch {
 
         let own_tokens = plan.own_tokens;
         let mut tokens_sold = own_tokens;
-        let mut fees = 0u128;
         let mut gross_total = 0u128;
         let mut fills = Vec::with_capacity(plan.copies.len());
         self.credit(&symbol, &buyer, own_tokens);
         for c in plan.copies {
             tokens_sold += c.tokens;
-            fees += c.fee;
             gross_total += c.gross;
             self.credit(&symbol, &c.follower, c.tokens);
             let ckey = (c.allowance.id, symbol.clone());
-            let held = self.copied.get(&ckey).copied().unwrap_or(0);
-            self.copied.insert(ckey, held + c.tokens);
+            let mut p = self.copied.get(&ckey).copied().unwrap_or_default();
+            p.tokens += c.tokens;
+            p.paid += c.gross;
+            self.copied.insert(ckey, p);
             self.allowances.insert((c.follower.clone(), buyer.clone()), c.allowance);
-            fills.push(CopyFill { follower: c.follower, near: U128(c.gross), fee: U128(c.fee), tokens: U128(c.tokens) });
+            fills.push(CopyFill { follower: c.follower, near: U128(c.gross), fee: U128(0), tokens: U128(c.tokens) });
         }
         let t = self.tokens.get_mut(&symbol).unwrap();
         t.near_reserve += plan.total_net;
@@ -470,9 +513,7 @@ impl CopyLaunch {
         self.totals.allowances -= gross_total;
         self.totals.storage_fees += (1 + fills.len() as u128) * FILL_STORAGE_FEE;
         if !fills.is_empty() {
-            self.add_claimable(&buyer, fees);
             let mut s = self.stats.get(&buyer).cloned().unwrap_or_default();
-            s.fees_earned += fees;
             s.copied_volume += gross_total;
             s.copies += fills.len() as u64;
             self.stats.insert(buyer.clone(), s);
@@ -482,8 +523,11 @@ impl CopyLaunch {
     }
 
     /// Sells `amount` of the caller's tokens back to the curve. If the caller has followers,
-    /// each live allowance sells the same share of what it copied, at the same price. The
-    /// caller is paid at once; followers' proceeds wait in `claim`. Needs 1 yoctoNEAR attached.
+    /// each live allowance sells the same share of what it copied, at the same price. Once a
+    /// follower has taken out more than they put into that position, the caller gets `fee_bps` of
+    /// the excess; before that, nothing.
+    /// The caller is paid at once; followers' proceeds and the caller's fees wait in `claim`.
+    /// Needs 1 yoctoNEAR attached.
     #[payable]
     pub fn sell(&mut self, symbol: String, amount: U128, min_near_out: U128) -> Trade {
         assert_one_yocto();
@@ -496,17 +540,29 @@ impl CopyLaunch {
         require!(own_net >= min_near_out.0, "the price moved: you would get less NEAR than your minimum");
 
         let mut paid = plan.own_gross;
+        let mut fees = 0u128;
         let mut fills = Vec::with_capacity(plan.copies.len());
         self.debit(&symbol, &seller, amount.0);
         for c in plan.copies {
             paid += c.gross;
+            fees += c.fee;
             self.debit(&symbol, &c.follower, c.tokens);
             let ckey = (c.allowance_id, symbol.clone());
-            let held = self.copied.get(&ckey).copied().unwrap_or(0);
-            self.copied.insert(ckey, held.saturating_sub(c.tokens));
-            let net = c.gross - FILL_STORAGE_FEE;
+            let mut p = c.position;
+            let before_fee = c.gross - FILL_STORAGE_FEE;
+            p.tokens = p.tokens.saturating_sub(c.tokens);
+            p.taken += before_fee;
+            p.fees += c.fee;
+            self.copied.insert(ckey, p);
+            let net = before_fee - c.fee;
             self.add_claimable(&c.follower, net);
-            fills.push(CopyFill { follower: c.follower, near: U128(net), fee: U128(0), tokens: U128(c.tokens) });
+            fills.push(CopyFill { follower: c.follower, near: U128(net), fee: U128(c.fee), tokens: U128(c.tokens) });
+        }
+        if fees > 0 {
+            self.add_claimable(&seller, fees);
+            let mut s = self.stats.get(&seller).cloned().unwrap_or_default();
+            s.fees_earned += fees;
+            self.stats.insert(seller.clone(), s);
         }
         let t = self.tokens.get_mut(&symbol).unwrap();
         t.near_reserve -= paid;
@@ -523,13 +579,13 @@ impl CopyLaunch {
 
     // ---- following ---------------------------------------------------------------------------
 
-    /// Publishes the caller's fee for copies of their buys, in basis points. It applies to
-    /// allowances granted from now on; existing ones keep the fee they were granted at.
+    /// Publishes the caller's share of followers' profit, in basis points. It applies to
+    /// allowances granted from now on; existing ones keep the share they were granted at.
     #[payable]
     pub fn set_fee(&mut self, fee_bps: u16) {
         let deposit = env::attached_deposit().as_yoctonear();
         require!(deposit >= SET_FEE_DEPOSIT, "attach 0.002 NEAR for the record");
-        require!(fee_bps <= MAX_FEE_BPS, "the fee can be at most 10%");
+        require!(fee_bps <= MAX_FEE_BPS, "the fee can be at most 20% of profit");
         self.fee_bps.insert(env::predecessor_account_id(), fee_bps);
         self.totals.storage_fees += deposit;
     }
@@ -537,7 +593,7 @@ impl CopyLaunch {
     /// Follows `creator`. The attached NEAR, less the 0.01 NEAR record fee, is the total cap:
     /// it is held here and is the most this allowance can ever spend. `per_trade_cap` bounds one
     /// copy, `expires_at_ms` ends it, and `max_fee_bps` is the highest creator fee the caller
-    /// accepts (the grant fails if the creator's published fee is higher).
+    /// accepts as a share of profit (the grant fails if the creator's published share is higher).
     #[payable]
     pub fn follow(&mut self, creator: AccountId, per_trade_cap: U128, expires_at_ms: U64, max_fee_bps: u16) -> AllowanceView {
         let follower = env::predecessor_account_id();
@@ -618,7 +674,8 @@ impl CopyLaunch {
 
     /// Sends `amount` of the caller's tokens out to their own account on the token's NEP-141
     /// contract. Attach 0.002 NEAR: it registers the caller there if needed. If the transfer
-    /// fails the tokens are put back.
+    /// fails the tokens are put back. Refused while anyone with a live allowance for the caller
+    /// holds copies of the caller's buys of this token.
     #[payable]
     pub fn withdraw_token(&mut self, symbol: String, amount: U128) -> Promise {
         let who = env::predecessor_account_id();
@@ -626,6 +683,12 @@ impl CopyLaunch {
         require!(deposit >= WITHDRAW_DEPOSIT, "attach 0.002 NEAR to register on the token contract");
         require!(amount.0 > 0, "the amount must be positive");
         let token = self.ready_token(&symbol);
+        // Otherwise a creator could take their tokens out and sell them elsewhere while the people
+        // copying them still hold theirs. Selling here takes the followers out at the same price.
+        require!(
+            !self.copies_held(&who, &symbol, env::block_timestamp()),
+            "people copying you hold this token: sell it here instead, and they sell with you"
+        );
         self.debit(&symbol, &who, amount.0);
         self.totals.storage_fees += deposit - TOKEN_REGISTRATION - 1;
         Promise::new(token.account_id)
@@ -784,14 +847,15 @@ impl CopyLaunch {
             .unwrap_or_default()
     }
 
-    /// Tokens bought by copies under the follower's current allowance for `creator` and not yet sold.
-    pub fn get_copied(&self, follower: AccountId, creator: AccountId, symbol: String) -> U128 {
-        let held = self
+    /// The follower's position from copying `creator` in `symbol` under their current allowance:
+    /// tokens still held, NEAR paid in, NEAR taken out by the creator's sells, fees paid.
+    pub fn get_copied(&self, follower: AccountId, creator: AccountId, symbol: String) -> PositionView {
+        let p = self
             .allowances
             .get(&(follower, creator))
             .and_then(|a| self.copied.get(&(a.id, symbol)).copied())
-            .unwrap_or(0);
-        U128(held)
+            .unwrap_or_default();
+        PositionView { tokens: U128(p.tokens), paid: U128(p.paid), taken: U128(p.taken), fees: U128(p.fees) }
     }
 
     pub fn get_claimable(&self, account_id: AccountId) -> U128 {
@@ -819,7 +883,7 @@ impl CopyLaunch {
             copies: plan
                 .copies
                 .into_iter()
-                .map(|c| CopyFill { follower: c.follower, near: U128(c.gross), fee: U128(c.fee), tokens: U128(c.tokens) })
+                .map(|c| CopyFill { follower: c.follower, near: U128(c.gross), fee: U128(0), tokens: U128(c.tokens) })
                 .collect(),
         }
     }
@@ -833,7 +897,7 @@ impl CopyLaunch {
             copies: plan
                 .copies
                 .into_iter()
-                .map(|c| CopyFill { follower: c.follower, near: U128(c.gross - FILL_STORAGE_FEE), fee: U128(0), tokens: U128(c.tokens) })
+                .map(|c| CopyFill { follower: c.follower, near: U128(c.gross - FILL_STORAGE_FEE - c.fee), fee: U128(c.fee), tokens: U128(c.tokens) })
                 .collect(),
         }
     }
@@ -887,6 +951,19 @@ impl CopyLaunch {
         self.totals.claimable += amount;
     }
 
+    /// True if anyone with a live allowance for `creator` still holds tokens of `symbol` that
+    /// their copies bought.
+    fn copies_held(&self, creator: &AccountId, symbol: &String, now: u64) -> bool {
+        let Some(list) = self.followers.get(creator) else { return false };
+        list.iter().any(|f| {
+            self.allowances.get(&(f.clone(), creator.clone())).is_some_and(|a| {
+                !a.is_expired(now)
+                    && self.copied.get(&(a.id, symbol.clone())).is_some_and(|p| p.tokens > 0)
+                    && self.balance(symbol, f) > 0
+            })
+        })
+    }
+
     /// Removes an allowance and both list entries. Returns its unspent NEAR, or `None` if there
     /// was no such allowance. The caller decides where the unspent NEAR goes.
     fn remove_allowance(&mut self, follower: &AccountId, creator: &AccountId) -> Option<u128> {
@@ -934,9 +1011,8 @@ impl CopyLaunch {
                 if a.spend(gross, now).is_err() {
                     continue; // the gate refused: no copy
                 }
-                let fee = gross * a.fee_bps as u128 / 10_000;
-                let net = gross - fee - FILL_STORAGE_FEE;
-                copies.push(CopyBuy { follower: follower.clone(), allowance: a, gross, fee, net, tokens: 0 });
+                let net = gross - FILL_STORAGE_FEE;
+                copies.push(CopyBuy { follower: follower.clone(), allowance: a, gross, net, tokens: 0 });
             }
         }
         // One price for everybody: the whole batch buys together and is shared out by NEAR paid in.
@@ -962,11 +1038,11 @@ impl CopyLaunch {
                     expired.push(follower.clone());
                     continue;
                 }
-                let position = self.copied.get(&(a.id, token.symbol.clone())).copied().unwrap_or(0);
+                let p = self.copied.get(&(a.id, token.symbol.clone())).copied().unwrap_or_default();
                 // The same share of the copied position as the seller sells of their own holding.
-                let tokens = mul_div(position, amount, held).min(self.balance(&token.symbol, follower));
+                let tokens = mul_div(p.tokens, amount, held).min(self.balance(&token.symbol, follower));
                 if tokens > 0 {
-                    copies.push(CopySell { follower: follower.clone(), allowance_id: a.id, tokens, gross: 0 });
+                    copies.push(CopySell { follower: follower.clone(), allowance_id: a.id, tokens, gross: 0, position: p, fee_bps: a.fee_bps, fee: 0 });
                 }
             }
         }
@@ -984,6 +1060,8 @@ impl CopyLaunch {
         for c in copies.iter_mut() {
             c.gross = mul_div(near_out, c.tokens, total_tokens);
             require!(c.gross > FILL_STORAGE_FEE, "a copied sale would not cover its record fee");
+            // The creator shares in profit only: what the follower has taken out beyond what they put in.
+            c.fee = c.position.fee_on(c.gross - FILL_STORAGE_FEE, c.fee_bps);
         }
         SellPlan { own_gross: mul_div(near_out, amount, total_tokens), total_tokens, copies, expired }
     }
