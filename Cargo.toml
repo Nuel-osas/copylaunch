@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["contracts/token", "contracts/launchpad"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+near-sdk = "=5.29.1"
+near-contract-standards = "=5.29.1"
+
+# The wasm that gets deployed. Small first: every launched token pays storage for its own copy.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = true
+overflow-checks = true
+
+# Unit tests need unwinding (`should_panic`), so they run on the dev profile.
+[profile.dev]
+opt-level = 1
+overflow-checks = true

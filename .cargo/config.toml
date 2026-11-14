@@ -1,0 +1,4 @@
+# near-sdk only routes panics to NEAR's host functions when `--cfg near` is set. Without it a
+# contract panic becomes a bare `unreachable` trap with no message.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "near"]
